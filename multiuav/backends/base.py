@@ -28,5 +28,8 @@ class SimBackend(ABC):
     def advance(self, dt: float) -> None:
         """Продвинуть симуляцию на dt секунд (для симулятора реального времени — ничего)."""
 
+    def message(self, text: str) -> None:
+        """Показать оператору строку состояния в окне симулятора (если оно есть)."""
+
     def close(self) -> None:
         pass

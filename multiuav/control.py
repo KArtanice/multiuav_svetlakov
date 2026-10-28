@@ -25,6 +25,8 @@ class ControlLimits:
     max_tilt: float = math.radians(30)  # крен/тангаж, рад
     max_yaw_rate: float = math.radians(90)  # рад/с
     max_climb: float = 3.0  # вертикальная скорость, м/с
+    max_rate: float = math.radians(200)  # Acro: угловая скорость крена/тангажа при полном стике, рад/с
+    hover_throttle: float = 0.5  # Acro: доля тяги, при которой дрон висит (для упрощённого симулятора)
 
 
 @dataclass(frozen=True)
@@ -35,13 +37,33 @@ class Setpoint:
     climb_rate: float  # м/с, > 0 — вверх
 
 
+@dataclass(frozen=True)
+class AcroSetpoint:
+    roll_rate: float  # рад/с, > 0 — крениться вправо
+    pitch_rate: float  # рад/с, > 0 — наклоняться вперёд
+    yaw_rate: float  # рад/с, > 0 — по часовой
+    throttle: float  # тяга 0..1
+
+
 def rc_to_setpoint(rc: RcOverride, limits: ControlLimits) -> Setpoint:
+    """AltHold: стики — углы наклона, газ — скорость подъёма."""
     roll, pitch, throttle, yaw = rc.normalized()
     return Setpoint(
         roll=roll * limits.max_tilt,
         pitch=pitch * limits.max_tilt,
         yaw_rate=yaw * limits.max_yaw_rate,
         climb_rate=throttle * limits.max_climb,
+    )
+
+
+def rc_to_acro(rc: RcOverride, limits: ControlLimits) -> AcroSetpoint:
+    """Acro: стики — угловые скорости, газ — тяга (низ стика — 0, верх — 1)."""
+    roll, pitch, throttle, yaw = rc.normalized()
+    return AcroSetpoint(
+        roll_rate=roll * limits.max_rate,
+        pitch_rate=pitch * limits.max_rate,
+        yaw_rate=yaw * limits.max_rate,
+        throttle=(throttle + 1.0) / 2.0,
     )
 
 

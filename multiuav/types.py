@@ -17,6 +17,12 @@ RC_MID = 1500
 RC_MAX = 2000
 RC_HALF = (RC_MAX - RC_MIN) / 2
 
+#: Режимы полёта, как в ArduPilot: AltHold — стики задают наклон, газ — скорость подъёма;
+#: Acro — стики задают угловые скорости, газ — тягу моторов, горизонт никто не держит.
+ALTHOLD = "althold"
+ACRO = "acro"
+MODES = (ALTHOLD, ACRO)
+
 
 @dataclass(frozen=True)
 class DroneState:
@@ -27,6 +33,10 @@ class DroneState:
     velocity: np.ndarray  # м/с, NED
     yaw: float  # рад
     collided: bool = False
+    # Дальномер по кругу (лидар): расстояние до препятствия в каждом секторе, м.
+    # Сектор i смотрит по курсу i * 360 / len(ranges) градусов (0 — север, по часовой).
+    # None — бэкенд дальномер не моделирует.
+    ranges: np.ndarray | None = None
 
     @property
     def altitude(self) -> float:
@@ -50,23 +60,27 @@ def _from_pwm(pwm: int) -> float:
 class RcOverride:
     """Команда управления как с пульта: четыре канала по 1000..2000, 1500 — центр.
 
-    Режим полёта с удержанием высоты (как AltHold в ArduPilot):
+    Режим AltHold (по умолчанию, как в ArduPilot):
       roll     > 1500 — крен вправо, дрон смещается вправо;
       pitch    > 1500 — наклон вперёд, дрон летит вперёд (стик от себя);
       throttle > 1500 — набор высоты, 1500 — держать высоту;
       yaw      > 1500 — поворот вправо (по часовой стрелке).
+    Режим Acro: roll, pitch, yaw — угловые скорости (центр — не вращаться),
+    throttle — тяга моторов: 1000 — ноль, 2000 — полная.
     """
 
     roll: int = RC_MID
     pitch: int = RC_MID
     throttle: int = RC_MID
     yaw: int = RC_MID
+    mode: str = ALTHOLD  # как переключатель режимов (CH5) на пульте
 
     @classmethod
     def from_normalized(cls, roll: float = 0.0, pitch: float = 0.0,
-                        throttle: float = 0.0, yaw: float = 0.0) -> RcOverride:
+                        throttle: float = 0.0, yaw: float = 0.0,
+                        mode: str = ALTHOLD) -> RcOverride:
         """Собрать команду из значений -1..1 по каждому каналу."""
-        return cls(_to_pwm(roll), _to_pwm(pitch), _to_pwm(throttle), _to_pwm(yaw))
+        return cls(_to_pwm(roll), _to_pwm(pitch), _to_pwm(throttle), _to_pwm(yaw), mode)
 
     def normalized(self) -> tuple[float, float, float, float]:
         """Каналы в виде -1..1: (roll, pitch, throttle, yaw)."""

@@ -3,6 +3,7 @@
   run       прогнать сценарий (в упрощённом симуляторе или в Cosys-AirSim)
   compare   сравнить алгоритмы и размеры группы на одном сценарии
   settings  создать settings.json для Cosys-AirSim из сценария
+  cameras   экраны с камер ведомых поверх окна Unreal
   gamepad   показать оси геймпада, чтобы настроить раскладку
 """
 
@@ -16,6 +17,7 @@ import time
 from pathlib import Path
 
 from .scenario import AlgorithmSpec, Scenario
+from .types import MODES
 
 
 def _make_backend(name: str, host: str):
@@ -34,10 +36,14 @@ def _load(args) -> Scenario:
     sc = Scenario.load(args.scenario)
     if getattr(args, "drones", None):
         sc.drones = args.drones
+    if getattr(args, "followers", None) is not None:
+        sc.drones = args.followers + 1  # ведомые идут колонной позади ведущего
     if getattr(args, "algorithm", None):
         sc.followers = AlgorithmSpec(args.algorithm, sc.followers.params)
     if getattr(args, "leader", None):
         sc.leader = AlgorithmSpec(args.leader, sc.leader.params)
+    if getattr(args, "mode", None):
+        sc.leader = AlgorithmSpec(sc.leader.name, {**sc.leader.params, "mode": args.mode})
     return sc
 
 
@@ -84,9 +90,24 @@ def cmd_settings(args) -> None:
 
     sc = _load(args)
     if args.write:
-        print(f"Записано: {write_settings(sc, Path(args.write) if args.write != '-' else DEFAULT_PATH)}")
+        path = Path(args.write) if args.write != "-" else DEFAULT_PATH
+        print(f"Записано: {write_settings(sc, path, args.subwindows)}")
     else:
-        print(json.dumps(build_settings(sc), indent=2))
+        print(json.dumps(build_settings(sc, args.subwindows), indent=2))
+
+
+def cmd_cameras(args) -> None:
+    from .cameras import run_cameras
+
+    drones = args.followers + 1 if args.followers is not None else args.drones
+    width, height = (int(v) for v in args.tile.lower().split("x"))
+    size, _, offset = args.game.lower().partition("+")
+    gw, gh = (int(v) for v in size.split("x"))
+    gx, gy = (int(v) for v in offset.split("+")) if offset else (0, 0)
+    position = (args.x, args.y) if args.x is not None and args.y is not None else None
+    run_cameras(drones, host=args.host, camera=args.camera, tile=(width, height),
+                columns=args.columns, fps=args.fps, corner=args.corner,
+                game=(gx, gy, gw, gh), position=position)
 
 
 def cmd_gamepad(args) -> None:
@@ -122,6 +143,11 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--backend", choices=["kinematic", "cosys"], default="kinematic")
     run.add_argument("--host", default="127.0.0.1", help="адрес машины с Cosys-AirSim")
     run.add_argument("--drones", type=int, help="число дронов вместо указанного в сценарии")
+    run.add_argument("--followers", type=int,
+                     help="сколько ведомых лететь за ведущим (0 — один ведущий); "
+                          "то же, что --drones N+1")
+    run.add_argument("--mode", choices=MODES,
+                     help="режим пульта ведущего: althold (как AltHold) или acro")
     run.add_argument("--algorithm", help="алгоритм ведомых вместо указанного в сценарии")
     run.add_argument("--leader", help="кто ведёт: waypoints, gamepad или свой алгоритм")
     run.add_argument("--out", help="папка для журнала прогона")
@@ -138,9 +164,29 @@ def main(argv: list[str] | None = None) -> None:
     settings = sub.add_parser("settings", help="settings.json для Cosys-AirSim")
     settings.add_argument("scenario")
     settings.add_argument("--drones", type=int)
+    settings.add_argument("--followers", type=int, help="сколько ведомых (дронов будет N+1)")
+    settings.add_argument("--subwindows", action="store_true",
+                          help="камеры первых 3 ведомых во встроенных подокнах AirSim (внизу окна)")
     settings.add_argument("--write", nargs="?", const="-",
                           help="записать в файл (без пути — в ~/Documents/AirSim/settings.json)")
     settings.set_defaults(func=cmd_settings)
+
+    cameras = sub.add_parser("cameras", help="экраны с камер ведомых в левом верхнем углу")
+    cameras.add_argument("--drones", type=int, default=5, help="сколько дронов всего (с ведущим)")
+    cameras.add_argument("--followers", type=int, help="сколько ведомых (вместо --drones)")
+    cameras.add_argument("--host", default="127.0.0.1")
+    cameras.add_argument("--camera", default="front_center", help="камера дрона в AirSim")
+    cameras.add_argument("--tile", default="256x144", help="размер одного экрана, пиксели")
+    cameras.add_argument("--columns", type=int, default=2)
+    cameras.add_argument("--fps", type=float, default=20.0, help="как часто перерисовывать окно")
+    cameras.add_argument("--corner", default="top-right",
+                         choices=["top-right", "top-left", "bottom-right", "bottom-left"],
+                         help="в каком углу окна игры (слева сверху — сообщения AirSim)")
+    cameras.add_argument("--game", default="1600x900+0+0",
+                         help="окно игры: ШИРИНАxВЫСОТА+X+Y (как запускает scripts/demo.sh)")
+    cameras.add_argument("--x", type=int, help="своё положение окна камер, пиксели (вместо --corner)")
+    cameras.add_argument("--y", type=int)
+    cameras.set_defaults(func=cmd_cameras)
 
     gamepad = sub.add_parser("gamepad", help="показать оси геймпада")
     gamepad.add_argument("--index", type=int, default=0)

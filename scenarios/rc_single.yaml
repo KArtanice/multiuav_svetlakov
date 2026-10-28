@@ -1,0 +1,29 @@
+# Один дрон с пульта RadioMaster (EdgeTX, режим USB Joystick), каналы на экране Unreal.
+# Раскладка осей — черновая под AETR (CH1 крен, CH2 тангаж, CH3 газ, CH4 рысканье):
+# проверь её командой `python -m multiuav gamepad` и поправь axes/invert ниже.
+# Газ работает как AltHold: середина стика — висеть, выше — подъём, ниже — снижение.
+# Запуск:
+#   python -m multiuav settings scenarios/rc_single.yaml --write
+#   (в Unreal: Play)
+#   python -m multiuav run scenarios/rc_single.yaml --backend cosys
+name: rc_single
+drones: 1
+rate_hz: 30
+duration_s: null  # без ограничения времени; остановить полёт — Ctrl+C в терминале
+
+start:
+  north: 0
+  east: 0
+  altitude: 10
+  heading_deg: 0
+
+leader:
+  algorithm: gamepad
+  params:
+    joystick: 0
+    axes: {roll: 0, pitch: 1, throttle: 2, yaw: 3}
+    invert: []        # у пульта «стик вверх» обычно уже плюс; если ось работает наоборот — впиши её сюда
+    deadzone: 0.03    # стики пульта точнее геймпада
+
+stop_on_collision: false  # задел куб или жёстко сел — летим дальше (столкновение попадёт в журнал)
+show_rc: true  # строка «CH1 Roll … CH4 Yaw» поверх окна Unreal, 5 раз в секунду

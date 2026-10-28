@@ -3,7 +3,10 @@
 import math
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace as NS
+
+import numpy as np
 
 import pytest
 
@@ -72,6 +75,32 @@ def test_yaw_right_is_negative_rate_for_cosys_client(backend):
     assert kwargs["vehicle_name"] == "Drone1"
 
 
+def test_rc_channels_not_shown_by_default(backend):
+    backend.send(0, RcOverride())
+    assert all(name != "simPrintLogMessage" for name, _, _ in backend.client.calls)
+
+
+def test_rc_channels_shown_for_leader_and_rate_limited(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cosysairsim", types.SimpleNamespace(MultirotorClient=FakeClient))
+    sc = Scenario(name="t", drones=2, leader=AlgorithmSpec("gamepad"),
+                  followers=AlgorithmSpec("single_file"), show_rc=True)
+    b = CosysBackend()
+    b.start(sc)
+    b.send(0, RcOverride(roll=1600, pitch=1400, throttle=1500, yaw=1750))
+    b.send(0, RcOverride(roll=2000, pitch=2000, throttle=2000, yaw=2000))  # сразу же — не печатаем
+    b.send(1, RcOverride(roll=1000))  # ведомых не показываем
+    prints = [args for name, args, _ in b.client.calls if name == "simPrintLogMessage"]
+    assert prints == [("RC Drone0: ", "CH1 Roll 1600  CH2 Pitch 1400  CH3 Thr 1500  CH4 Yaw 1750  Mode ALTHOLD")]
+
+
+def test_rc_single_scenario_enables_display():
+    sc = Scenario.load(Path(__file__).resolve().parents[1] / "scenarios" / "rc_single.yaml")
+    assert sc.drones == 1 and sc.show_rc and sc.duration_s is None
+    assert not sc.stop_on_collision
+    assert sc.leader.name == "gamepad"
+    assert set(sc.leader.params["axes"]) == {"roll", "pitch", "throttle", "yaw"}
+
+
 def test_missing_vehicles_are_reported(monkeypatch):
     class Few(FakeClient):
         def listVehicles(self):
@@ -82,3 +111,39 @@ def test_missing_vehicles_are_reported(monkeypatch):
                   followers=AlgorithmSpec("single_file"))
     with pytest.raises(RuntimeError, match="Drone1"):
         CosysBackend().start(sc)
+
+
+def test_acro_sends_angle_rates_and_throttle(backend):
+    from multiuav.types import ACRO
+
+    backend.send(2, RcOverride(roll=2000, pitch=1500, throttle=1750, yaw=2000, mode=ACRO))
+    name, args, kwargs = backend.client.calls[-1]
+    assert name == "moveByAngleRatesThrottleAsync"
+    roll_rate, pitch_rate, yaw_rate, throttle, _ = args
+    assert roll_rate > 0 and pitch_rate == 0 and yaw_rate < 0  # рысканье — со сменой знака, как в AltHold
+    assert math.isclose(throttle, 0.75)
+    assert kwargs["vehicle_name"] == "Drone2"
+
+
+def test_lidar_points_become_world_sectors():
+    from multiuav.backends.cosys import lidar_to_ranges
+    from multiuav.scenario import Perception
+
+    yaw = math.radians(100)  # дрон смотрит почти на восток
+    q = NS(w_val=math.cos(yaw / 2), x_val=0.0, y_val=0.0, z_val=math.sin(yaw / 2))
+    points = np.array([[5.0, 0.0, 0.0],    # 5 м прямо по носу — значит, в секторе 90..180°
+                       [3.0, 0.0, 8.0],    # 8 м ниже — земля, не препятствие
+                       [0.0, 0.0, 0.0]])   # луч никуда не попал
+    ranges = lidar_to_ranges(points, q, Perception(lidar_range=20, sectors=4))
+    assert ranges.tolist() == [20.0, 5.0, 20.0, 20.0]  # секторы: север, восток, юг, запад
+
+
+def test_settings_add_lidar_to_every_drone():
+    from multiuav.cosys_settings import build_settings
+
+    sc = Scenario(name="t", drones=3, leader=AlgorithmSpec("waypoints"),
+                  followers=AlgorithmSpec("visual_follow"))
+    vehicles = build_settings(sc)["Vehicles"]
+    for v in vehicles.values():
+        lidar = v["Sensors"]["Lidar"]
+        assert lidar["SensorType"] == 6 and lidar["NumberOfChannels"] == 5

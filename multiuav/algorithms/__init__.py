@@ -15,12 +15,15 @@ from pathlib import Path
 from .base import FollowerAlgorithm
 from .leader_path import LeaderPath
 from .single_file import SingleFile
+from .vision import Flock, VisualFollow
 from .waypoints import WaypointPilot
 
 BUILTIN: dict[str, type[FollowerAlgorithm]] = {
     "single_file": SingleFile,
     "leader_path": LeaderPath,
     "waypoints": WaypointPilot,
+    "visual_follow": VisualFollow,
+    "flock": Flock,
 }
 
 
@@ -56,5 +59,5 @@ def load_algorithm(name: str) -> type[FollowerAlgorithm]:
     return cls
 
 
-__all__ = ["BUILTIN", "FollowerAlgorithm", "LeaderPath", "SingleFile", "WaypointPilot",
-           "load_algorithm"]
+__all__ = ["BUILTIN", "Flock", "FollowerAlgorithm", "LeaderPath", "SingleFile", "VisualFollow",
+           "WaypointPilot", "load_algorithm"]

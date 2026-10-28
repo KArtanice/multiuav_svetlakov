@@ -40,6 +40,31 @@ class Finish:
                 and self.east[0] <= position[1] <= self.east[1])
 
 
+@dataclass(frozen=True)
+class Perception:
+    """Что дрон видит сам, без связи с другими дронами.
+
+    lidar_range — дальность кругового дальномера (лидара), м; 0 — без дальномера.
+    sectors — на сколько секторов делится круг дальномера.
+    vision_range — с какого расстояния камеры замечают другой дрон, м.
+    fov_deg — поле зрения камер вокруг курса дрона, градусы (360 — круговой обзор).
+    noise — ошибка оценки положения соседа, доля от расстояния до него (0.02 — 2 %).
+    """
+
+    lidar_range: float = 20.0
+    sectors: int = 72
+    vision_range: float = 40.0
+    fov_deg: float = 360.0
+    noise: float = 0.02
+
+
+def _duration(raw: Any) -> float | None:
+    """`duration_s: null` или 0 в YAML — летать без ограничения времени."""
+    if raw is None or float(raw) <= 0:
+        return None
+    return float(raw)
+
+
 @dataclass
 class Scenario:
     name: str
@@ -47,7 +72,7 @@ class Scenario:
     leader: AlgorithmSpec
     followers: AlgorithmSpec
     rate_hz: float = 20.0
-    duration_s: float = 120.0
+    duration_s: float | None = 120.0  # None — без ограничения, до Ctrl+C
     start_north: float = 0.0
     start_east: float = 0.0
     altitude: float = 10.0
@@ -56,6 +81,14 @@ class Scenario:
     buildings: list[Building] = field(default_factory=list)
     finish: Finish | None = None
     limits: ControlLimits = ControlLimits()
+    show_rc: bool = False  # показывать каналы RC дрона 0 на экране симулятора
+    # True — разбитый дрон выбывает, прогон кончается, когда выбыли все.
+    # False — для ручных полётов: столкновение записывается, но управление продолжается.
+    stop_on_collision: bool = True
+    perception: Perception = Perception()
+    # Модель дрона в Cosys-AirSim: generic (обычный, тяга/вес ~1,7) или fast
+    # (тяга вдвое больше, наклон до 45°, вращение до 5 рад/с — нужна доработка плагина).
+    model: str = "generic"
 
     def start_positions(self) -> list[np.ndarray]:
         """Стартовые точки NED: ведущий впереди, остальные колонной позади него."""
@@ -78,6 +111,7 @@ class Scenario:
         world = data.get("world", {})
         limits = data.get("limits", {})
         finish = data.get("finish")
+        perception = data.get("perception", {})
 
         def spec(key: str, default: str) -> AlgorithmSpec:
             raw = data.get(key, {})
@@ -91,7 +125,7 @@ class Scenario:
             leader=spec("leader", "gamepad"),
             followers=spec("followers", "single_file"),
             rate_hz=float(data.get("rate_hz", 20.0)),
-            duration_s=float(data.get("duration_s", 120.0)),
+            duration_s=_duration(data.get("duration_s", 120.0)),
             start_north=float(start.get("north", 0.0)),
             start_east=float(start.get("east", 0.0)),
             altitude=float(start.get("altitude", 10.0)),
@@ -104,5 +138,12 @@ class Scenario:
                 max_tilt=math.radians(float(limits.get("max_tilt_deg", 30.0))),
                 max_yaw_rate=math.radians(float(limits.get("max_yaw_rate_deg", 90.0))),
                 max_climb=float(limits.get("max_climb", 3.0)),
+                max_rate=math.radians(float(limits.get("max_rate_deg", 200.0))),
+                hover_throttle=float(limits.get("hover_throttle", 0.5)),
             ),
+            show_rc=bool(data.get("show_rc", False)),
+            stop_on_collision=bool(data.get("stop_on_collision", True)),
+            perception=Perception(**{k: type(getattr(Perception(), k))(v)
+                                     for k, v in perception.items()}),
+            model=str(data.get("model", "generic")).lower(),
         )
