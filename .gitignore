@@ -5,3 +5,8 @@ __pycache__/
 venv/
 runs/
 .pytest_cache/
+
+# Личные материалы и результаты прогонов — не для репозитория
+for_cogni/
+log.txt/
+corner.png

@@ -1,0 +1,53 @@
+--- a/Source/AirLib/include/common/AirSimSettings.hpp
++++ b/Source/AirLib/include/common/AirSimSettings.hpp
+@@ -415,6 +415,7 @@
+             //optional
+             std::string default_vehicle_state;
+             std::string pawn_path;
++            std::string model = "Generic"; // MultiUAV: "Fast" — быстрая модель SimpleFlight
+             bool allow_api_always = true;
+             bool auto_create = true;
+             bool enable_collision_passthrough = false;
+@@ -1042,6 +1043,7 @@
+ 
+             //optional settings_json
+             vehicle_setting->pawn_path = settings_json.getString("PawnPath", "");
++            vehicle_setting->model = settings_json.getString("Model", "Generic");
+             vehicle_setting->default_vehicle_state = settings_json.getString("DefaultVehicleState", "");
+             vehicle_setting->allow_api_always = settings_json.getBool("AllowAPIAlways",
+                                                                       vehicle_setting->allow_api_always);
+--- a/Source/AirLib/include/vehicles/multirotor/firmwares/simple_flight/SimpleFlightQuadXParams.hpp
++++ b/Source/AirLib/include/vehicles/multirotor/firmwares/simple_flight/SimpleFlightQuadXParams.hpp
+@@ -38,6 +38,14 @@
+ 
+             // Only Generic for now
+             setupFrameGenericQuad(params);
++
++            // MultiUAV: "Model": "Fast" — та же рама, но обороты x1.14, тяга x1.3
++            // (тяга/вес ~2.2 вместо ~1.7). Больше нельзя без перенастройки регуляторов
++            // SimpleFlight: при тяге x2 дрон раскачивался и не мог снижаться.
++            if (vehicle_setting_ && vehicle_setting_->model == "Fast") {
++                params.rotor_params.max_rpm *= 1.14017543f;
++                params.rotor_params.calculateMaxThrust();
++            }
+         }
+ 
+         virtual const SensorFactory* getSensorFactory() const override
+--- a/Source/AirLib/include/vehicles/multirotor/firmwares/simple_flight/SimpleFlightApi.hpp
++++ b/Source/AirLib/include/vehicles/multirotor/firmwares/simple_flight/SimpleFlightApi.hpp
+@@ -34,6 +34,15 @@
+         {
+             readSettings(*vehicle_setting);
+ 
++            // MultiUAV: быстрая модель — наклон до 45° (было pi/5.5 = 32.7°),
++            // угловая скорость до 5 рад/с (было 2.5). Тяга x1.3 (см. SimpleFlightQuadXParams):
++            // висение на газе ~0.45 — выше минимального 0.3, регуляторы менять не нужно.
++            if (vehicle_setting->model == "Fast") {
++                const float pi = 3.14159265359f;
++                params_.angle_level_pid.max_limit = simple_flight::Axis4r(pi / 4, pi / 4, pi, 1.0f);
++                params_.angle_rate_pid.max_limit = simple_flight::Axis3r(5.0f, 5.0f, 5.0f);
++            }
++
+             //TODO: set below properly for better high speed safety
+             safety_params_.vel_to_breaking_dist = safety_params_.min_breaking_dist = 0;
+ 
