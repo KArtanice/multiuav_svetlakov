@@ -320,6 +320,16 @@
 - Сводный отчёт по разделам 21–23 — `docs/drone_physics_report.md`; скрипты замеров перенесены в `scripts/physics_tests/` (`run_model.sh`, `acrotest.py`, `althold.py`).
 - Урок: Python `open().read()/write()` молча переводит окончания строк CRLF → LF (так было с `PhysicsBody.hpp`, `FastPhysicsEngine.hpp`, `MultiRotorParams.hpp`) — патч раздулся до 2666 строк. Исправлено `sed -i 's/$/\r/'`; проверять `grep -c $'\r'` до и после.
 
+### 24. Отладочные строки AirSim — по клавише F2 (30.10.2026)
+- Строки в левом верхнем углу (`Loaded settings…`, `Joystick (T,R,P,Y…)`, `RC Mode`, `Collision…`, наша `RC Drone0: …`) выводит плагин через `UAirBlueprintLib::LogMessage` → `GEngine->AddOnScreenDebugMessage`. В плагине уже был ключ `"LogMessagesVisible"` в settings.json: при `false` строки не выводятся вовсе. Переключать его во время игры было нечем.
+- Сделано:
+  - `multiuav settings` по умолчанию пишет `"LogMessagesVisible": false`; `--messages` (в `scripts/demo.sh` — `-d`) включает строки с самого старта;
+  - патч `airsim_patches/05-toggle-log-messages.patch` (`SimHUD.h/.cpp`, копии — `*.bak-before-msg-toggle`): **F2** в окне игры показывает и прячет строки. Сборка `Succeeded`.
+- Что скрывается вместе с ними: красная строка `COLLISION DroneN` и `MultiUAV: FOLLOWERS: …`. Надпись `COLLISION #N` над дроном (`simPlotStrings`) и подсветка в окне камер остаются.
+- Разовые строки, пришедшие, пока строки скрыты (`Loaded settings…`, `requestApiControl was successful`), не запоминаются: после F2 видны только те, что обновляются постоянно.
+- Кнопка `REC` справа внизу — это не строка, а кнопка записи AirSim (клавиша R); F2 её не трогает.
+- На карте Виталия не действует, пока он не соберёт игру с патчем 05.
+
 ## Шпаргалка на будущее
 
 ```bash

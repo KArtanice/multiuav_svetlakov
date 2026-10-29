@@ -91,9 +91,9 @@ def cmd_settings(args) -> None:
     sc = _load(args)
     if args.write:
         path = Path(args.write) if args.write != "-" else DEFAULT_PATH
-        print(f"Записано: {write_settings(sc, path, args.subwindows)}")
+        print(f"Записано: {write_settings(sc, path, args.subwindows, args.messages)}")
     else:
-        print(json.dumps(build_settings(sc, args.subwindows), indent=2))
+        print(json.dumps(build_settings(sc, args.subwindows, args.messages), indent=2))
 
 
 def cmd_cameras(args) -> None:
@@ -167,6 +167,8 @@ def main(argv: list[str] | None = None) -> None:
     settings.add_argument("--followers", type=int, help="сколько ведомых (дронов будет N+1)")
     settings.add_argument("--subwindows", action="store_true",
                           help="камеры первых 3 ведомых во встроенных подокнах AirSim (внизу окна)")
+    settings.add_argument("--messages", action="store_true",
+                          help="показывать отладочные строки AirSim с самого старта (иначе — по F2)")
     settings.add_argument("--write", nargs="?", const="-",
                           help="записать в файл (без пути — в ~/Documents/AirSim/settings.json)")
     settings.set_defaults(func=cmd_settings)

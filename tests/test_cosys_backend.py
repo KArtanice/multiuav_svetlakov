@@ -167,6 +167,14 @@ def test_rotor_drag_goes_to_settings_only_when_set():
     assert {v["RotorDrag"] for v in build_settings(sc)["Vehicles"].values()} == {0.035}
 
 
+def test_log_messages_hidden_by_default():
+    from multiuav.cosys_settings import build_settings
+    sc = Scenario(name="t", drones=2, leader=AlgorithmSpec("gamepad"),
+                  followers=AlgorithmSpec("single_file"))
+    assert build_settings(sc)["LogMessagesVisible"] is False
+    assert build_settings(sc, messages=True)["LogMessagesVisible"] is True
+
+
 def test_rate_gains_are_sent_to_every_drone(monkeypatch):
     fake = types.SimpleNamespace(MultirotorClient=FakeClient, PIDGains=lambda *g: g,
                                  AngleRateControllerGains=lambda r, p, y: (r, p, y))

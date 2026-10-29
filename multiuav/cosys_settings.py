@@ -49,7 +49,8 @@ def subwindows(scenario: Scenario) -> list[dict]:
             for k in range(min(3, scenario.drones - 1))]
 
 
-def build_settings(scenario: Scenario, with_subwindows: bool = False) -> dict:
+def build_settings(scenario: Scenario, with_subwindows: bool = False,
+                   messages: bool = False) -> dict:
     vehicles = {}
     for i, p in enumerate(scenario.start_positions()):
         vehicles[vehicle_name(i)] = {
@@ -73,6 +74,9 @@ def build_settings(scenario: Scenario, with_subwindows: bool = False) -> dict:
         "SimMode": "Multirotor",
         "ClockSpeed": 1,
         "ViewMode": "FlyWithMe",
+        # Отладочные строки AirSim в углу экрана (и наши simPrintLogMessage) скрыты;
+        # F2 в окне игры показывает/прячет их (своя доработка плагина, патч 05).
+        "LogMessagesVisible": messages,
         "Vehicles": vehicles,
     }
     if with_subwindows:
@@ -81,8 +85,8 @@ def build_settings(scenario: Scenario, with_subwindows: bool = False) -> dict:
 
 
 def write_settings(scenario: Scenario, path: Path = DEFAULT_PATH,
-                   with_subwindows: bool = False) -> Path:
+                   with_subwindows: bool = False, messages: bool = False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(build_settings(scenario, with_subwindows), indent=2),
+    path.write_text(json.dumps(build_settings(scenario, with_subwindows, messages), indent=2),
                     encoding="utf-8")
     return path

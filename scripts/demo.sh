@@ -10,6 +10,7 @@
 #   scripts/demo.sh -k                   без 3D: упрощённый симулятор kinematic
 #   scripts/demo.sh -c bottom-left       экраны камер в другом углу окна игры
 #   scripts/demo.sh -w -n                камеры 3 ведомых внутри окна Unreal (подокна AirSim, внизу)
+#   scripts/demo.sh -d                   отладочные строки AirSim видны сразу (иначе — по F2 в окне игры)
 #   scripts/demo.sh -q 3                 графика Epic (0 Low … 4 Cinematic; по умолчанию 1 — Medium:
 #                                        игре нужно больше кадров в секунду, иначе камеры тормозят)
 #
@@ -31,14 +32,15 @@ cameras=1
 corner=top-right
 quality=1
 subwindows=()
+messages=()
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; echo
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; echo
   echo "Опции: -s сценарий  -f ведомых  -m althold|acro  -a алгоритм  -M blocks|cesium|/Game/...";
   echo "       -e (Unreal уже открыт)  -k (kinematic, без 3D)  -n (без экранов камер)"
-  echo "       -c top-right|top-left|bottom-right|bottom-left  -w (подокна AirSim внутри Unreal)"
+  echo "       -c top-right|top-left|bottom-right|bottom-left  -w (подокна AirSim внутри Unreal)  -d (отладочные строки сразу)"
   echo "       -q 0..4 (качество графики; по умолчанию 1 — Medium)"; }
 
-while getopts "s:f:m:a:M:c:q:ekwnh" opt; do
+while getopts "s:f:m:a:M:c:q:ekwndh" opt; do
   case $opt in
     s) scenario=$OPTARG ;;
     f) followers=$OPTARG ;;
@@ -55,6 +57,7 @@ while getopts "s:f:m:a:M:c:q:ekwnh" opt; do
     c) corner=$OPTARG ;;
     q) quality=$OPTARG ;;
     w) subwindows=(--subwindows) ;;
+    d) messages=(--messages) ;;
     h|*) usage; exit 0 ;;
   esac
 done
@@ -75,7 +78,7 @@ trap cleanup EXIT
 
 if [[ $backend == cosys ]]; then
   echo ">> settings.json для $((followers + 1)) дронов"
-  python -m multiuav settings "$scenario" --followers "$followers" "${subwindows[@]}" --write
+  python -m multiuav settings "$scenario" --followers "$followers" "${subwindows[@]}" "${messages[@]}" --write
 
   if [[ $launch_ue == 1 ]]; then
     echo ">> Unreal: $MAP (лог — $out/unreal.log)"
