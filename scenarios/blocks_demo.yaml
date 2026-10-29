@@ -9,7 +9,7 @@ duration_s: 120
 start:
   north: 0
   east: 0
-  altitude: 30
+  altitude: 10
   heading_deg: 0
   spacing: 5
 
