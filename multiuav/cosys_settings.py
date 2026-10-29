@@ -61,10 +61,13 @@ def build_settings(scenario: Scenario, with_subwindows: bool = False) -> dict:
         }
         if scenario.perception.lidar_range > 0:
             vehicles[vehicle_name(i)]["Sensors"] = {LIDAR_NAME: lidar_settings(scenario)}
-        if scenario.model == "fast":
+        if scenario.model.startswith("fast"):
             # Своя доработка плагина (SimpleFlightQuadXParams/SimpleFlightApi): без неё
-            # AirSim ключ Model для SimpleFlight молча игнорирует.
-            vehicles[vehicle_name(i)]["Model"] = "Fast"
+            # AirSim ключ Model для SimpleFlight молча игнорирует. fast2.5 → "Fast2.5": тяга x2.5.
+            vehicles[vehicle_name(i)]["Model"] = "Fast" + scenario.model[4:]
+        if scenario.rotor_drag > 0:
+            # Тоже своя доработка плагина (патч 04): без неё ключ игнорируется.
+            vehicles[vehicle_name(i)]["RotorDrag"] = scenario.rotor_drag
     settings = {
         "SettingsVersion": 2.0,
         "SimMode": "Multirotor",

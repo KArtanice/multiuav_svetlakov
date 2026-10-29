@@ -147,3 +147,40 @@ def test_settings_add_lidar_to_every_drone():
     for v in vehicles.values():
         lidar = v["Sensors"]["Lidar"]
         assert lidar["SensorType"] == 6 and lidar["NumberOfChannels"] == 5
+
+
+def test_fast_model_with_thrust_scale_goes_to_settings():
+    from multiuav.cosys_settings import build_settings
+    sc = Scenario(name="t", drones=2, leader=AlgorithmSpec("gamepad"),
+                  followers=AlgorithmSpec("single_file"), model="fast2.5")
+    assert {v["Model"] for v in build_settings(sc)["Vehicles"].values()} == {"Fast2.5"}
+    sc.model = "generic"
+    assert all("Model" not in v for v in build_settings(sc)["Vehicles"].values())
+
+
+def test_rotor_drag_goes_to_settings_only_when_set():
+    from multiuav.cosys_settings import build_settings
+    sc = Scenario(name="t", drones=2, leader=AlgorithmSpec("gamepad"),
+                  followers=AlgorithmSpec("single_file"))
+    assert all("RotorDrag" not in v for v in build_settings(sc)["Vehicles"].values())
+    sc.rotor_drag = 0.035
+    assert {v["RotorDrag"] for v in build_settings(sc)["Vehicles"].values()} == {0.035}
+
+
+def test_rate_gains_are_sent_to_every_drone(monkeypatch):
+    fake = types.SimpleNamespace(MultirotorClient=FakeClient, PIDGains=lambda *g: g,
+                                 AngleRateControllerGains=lambda r, p, y: (r, p, y))
+    monkeypatch.setitem(sys.modules, "cosysairsim", fake)
+    sc = Scenario(name="t", drones=2, leader=AlgorithmSpec("gamepad"),
+                  followers=AlgorithmSpec("single_file"), rate_gains=(0.5, 0.1, 0.0))
+    b = CosysBackend()
+    b.start(sc)
+    sent = [(a, k["vehicle_name"]) for n, a, k in b.client.calls if n == "setAngleRateControllerGains"]
+    gains = ((0.5, 0.1, 0.0),) * 3  # крен, тангаж, рысканье
+    assert sent == [((gains,), "Drone0"), ((gains,), "Drone1")]
+
+
+def test_rate_gains_from_yaml(tmp_path):
+    f = tmp_path / "s.yaml"
+    f.write_text("name: s\ndrones: 1\nleader: {algorithm: gamepad}\nrate_gains: {p: 0.4}\n")
+    assert Scenario.load(f).rate_gains == (0.4, 0.0, 0.0)

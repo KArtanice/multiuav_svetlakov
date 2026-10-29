@@ -119,6 +119,10 @@ class CosysBackend(SimBackend):
         for name in self.names:
             self.client.enableApiControl(True, name)
             self.client.armDisarm(True, name)
+            if scenario.rate_gains:
+                g = airsim.PIDGains(*scenario.rate_gains)
+                self.client.setAngleRateControllerGains(
+                    airsim.AngleRateControllerGains(g, g, g), vehicle_name=name)
         for f in [self.client.takeoffAsync(vehicle_name=n) for n in self.names]:
             f.join()
         for f in [self.client.moveToZAsync(-scenario.altitude, 3.0, vehicle_name=n)

@@ -6,7 +6,8 @@
 # Режим пульта: --mode althold (по умолчанию) или --mode acro; или тумблер, см. mode_switch.
 # Всё сразу: scripts/demo.sh  (подробности — scripts/demo.sh --help)
 name: rc_group
-model: generic      # fast — экспериментальная доработка плагина, пока нестабильна (см. файл опыта, раздел 20)
+model: fast2.5      # generic — тяга/вес 1,7. fast2.5 — тяга ×2,5, тяга/вес 4,3, рекомендую для Acro. fast<k> — тяга ×k, k от 1 до 4 (патчи 02, 03 плагина; файл опыта, раздел 22)
+rotor_drag: 0.035   # сопротивление винтов, с/м (патч 04): 0 — «лёд», 0.035 — как в kinematic
 drones: 5           # ведущий + 4 ведомых
 rate_hz: 20
 duration_s: null    # без ограничения времени; остановить — Ctrl+C
@@ -27,7 +28,7 @@ leader:
     deadzone: 0.03
     mode: althold   # althold — как AltHold; acro — стики крутят, газ — тяга
     # Тумблер режима на пульте (раскомментируй и впиши номер оси из `python -m multiuav gamepad`):
-    # mode_switch: {axis: 4, acro_above: 0.0}
+    mode_switch: {axis: 4, acro_above: 0.0}
 
 followers:
   algorithm: visual_follow   # или flock — стая Рейнольдса

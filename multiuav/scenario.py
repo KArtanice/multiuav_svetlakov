@@ -65,6 +65,13 @@ def _duration(raw: Any) -> float | None:
     return float(raw)
 
 
+def _rate_gains(raw: Any) -> tuple[float, float, float] | None:
+    """`rate_gains: {p: 0.5, i: 0.1, d: 0}` в YAML; пропущенные i и d — ноль."""
+    if not raw:
+        return None
+    return float(raw["p"]), float(raw.get("i", 0.0)), float(raw.get("d", 0.0))
+
+
 @dataclass
 class Scenario:
     name: str
@@ -86,9 +93,16 @@ class Scenario:
     # False — для ручных полётов: столкновение записывается, но управление продолжается.
     stop_on_collision: bool = True
     perception: Perception = Perception()
-    # Модель дрона в Cosys-AirSim: generic (обычный, тяга/вес ~1,7) или fast
-    # (тяга вдвое больше, наклон до 45°, вращение до 5 рад/с — нужна доработка плагина).
+    # Модель дрона в Cosys-AirSim: generic (обычный, тяга/вес ~1,7) или fast<k>, например fast2.5
+    # (тяга x k, наклон до 45°, вращение до 5 рад/с; fast без числа — x1.3; нужна доработка плагина).
     model: str = "generic"
+    # Коэффициенты (P, I, D) регулятора угловых скоростей SimpleFlight, одни на крен, тангаж
+    # и рысканье. None — как в плагине (generic: P 0.25; fast<k>: 0.25/k).
+    rate_gains: tuple[float, float, float] | None = None
+    # Сопротивление винтов в Cosys, с/м: сила -k * тяга * скорость поперёк оси винтов. Без него
+    # (0, как в исходном AirSim) дрон скользит, как по льду. Нужен патч плагина 04. В kinematic
+    # похожее сопротивление есть всегда (drag 0.35 1/с ≈ k 0.036 на висении).
+    rotor_drag: float = 0.0
 
     def start_positions(self) -> list[np.ndarray]:
         """Стартовые точки NED: ведущий впереди, остальные колонной позади него."""
@@ -146,4 +160,6 @@ class Scenario:
             perception=Perception(**{k: type(getattr(Perception(), k))(v)
                                      for k, v in perception.items()}),
             model=str(data.get("model", "generic")).lower(),
+            rate_gains=_rate_gains(data.get("rate_gains")),
+            rotor_drag=float(data.get("rotor_drag", 0.0)),
         )
