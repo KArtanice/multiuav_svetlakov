@@ -5,6 +5,7 @@
   settings  создать settings.json для Cosys-AirSim из сценария
   cameras   экраны с камер ведомых поверх окна Unreal
   gamepad   показать оси геймпада, чтобы настроить раскладку
+  menu      окно с параметрами эксперимента и кнопкой «Старт»
 """
 
 from __future__ import annotations
@@ -133,6 +134,12 @@ def cmd_gamepad(args) -> None:
         print()
 
 
+def cmd_menu(args) -> None:
+    from .menu import main as menu_main
+
+    menu_main()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="multiuav", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -193,6 +200,9 @@ def main(argv: list[str] | None = None) -> None:
     gamepad = sub.add_parser("gamepad", help="показать оси геймпада")
     gamepad.add_argument("--index", type=int, default=0)
     gamepad.set_defaults(func=cmd_gamepad)
+
+    menu = sub.add_parser("menu", help="окно с параметрами эксперимента и кнопкой «Старт»")
+    menu.set_defaults(func=cmd_menu)
 
     args = parser.parse_args(argv)
     args.func(args)
