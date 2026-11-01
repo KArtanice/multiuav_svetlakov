@@ -52,7 +52,8 @@ def cmd_run(args) -> None:
     from .manager import SwarmManager
 
     sc = _load(args)
-    result = SwarmManager(sc, _make_backend(args.backend, args.host)).run()
+    result = SwarmManager(sc, _make_backend(args.backend, args.host),
+                          log_dir=args.flight_log).run()
     print(json.dumps(result.summary(), ensure_ascii=False, indent=2))
     if args.out:
         out = result.save(args.out)
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--algorithm", help="алгоритм ведомых вместо указанного в сценарии")
     run.add_argument("--leader", help="кто ведёт: waypoints, gamepad или свой алгоритм")
     run.add_argument("--out", help="папка для журнала прогона")
+    run.add_argument("--flight-log", help="папка для журнала по дронам: drone0.csv, drone1.csv, ...")
     run.add_argument("--plot", help="сохранить картинку траекторий (PNG)")
     run.set_defaults(func=cmd_run)
 

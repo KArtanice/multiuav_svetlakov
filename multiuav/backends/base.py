@@ -31,5 +31,10 @@ class SimBackend(ABC):
     def message(self, text: str) -> None:
         """Показать оператору строку состояния в окне симулятора (если оно есть)."""
 
+    def blackout(self) -> bool:
+        """Экран оператора сейчас чёрный? Бэкенд, который умеет затемнение, переопределяет этот
+        метод; значение попадает в столбец blackout журнала полёта."""
+        return False
+
     def close(self) -> None:
         pass

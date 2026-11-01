@@ -93,53 +93,69 @@ def make_menu(tmp_path, **kwargs):
     return menu, root, shown
 
 
+class FakeAttempt:
+    """Попытка без процесса: ею управляет тест."""
+
+    def __init__(self, run_dir, summary=None, ok=True, message=""):
+        self.run_dir = run_dir
+        self.running = True
+        self.stop_calls = 0
+        self._result = (summary or {"finished": 3, "drones": 3, "collided": 0}, ok, message)
+
+    def stop(self):
+        self.stop_calls += 1
+        self.running = False
+        self.stopped = True
+
+    stopped = False
+
+    def finish(self):
+        self.running = False
+
+    def result(self):
+        from multiuav.experiment import AttemptResult
+
+        summary, ok, message = self._result
+        return AttemptResult(self.run_dir, ok, self.stopped, summary, message)
+
+
+def fake_launcher(tmp_path, calls, **attempt_kwargs):
+    def launch(config):
+        calls.append(config)
+        attempt = FakeAttempt(tmp_path / "run", **attempt_kwargs)
+        calls.append(attempt)
+        return attempt
+    return launch
+
+
 def test_gamepad_indicator_shows_connected_and_not_connected(tmp_path):
-    menu, root, _ = make_menu(tmp_path, gamepad_probe=lambda: (True, "RadioMaster Pocket"))
+    menu, _, _ = make_menu(tmp_path, gamepad_probe=lambda: (True, "RadioMaster Pocket"))
     assert "подключён" in menu.gamepad_text.get() and "RadioMaster" in menu.gamepad_text.get()
     assert menu.gamepad_label.kw["fg"] == "#1b7f3b"
-
     menu2, _, _ = make_menu(tmp_path)
     assert "не подключён" in menu2.gamepad_text.get()
     assert menu2.gamepad_label.kw["fg"] == "#b3261e"
 
 
-def test_gamepad_is_polled_repeatedly(tmp_path):
-    menu, root, _ = make_menu(tmp_path)
-    assert root.scheduled  # опрос пульта запланирован
+def test_gamepad_is_polled_once_per_tick_and_not_during_the_flight(tmp_path):
+    probes = []
+    calls = []
+    menu, root, _ = make_menu(tmp_path, gamepad_probe=lambda: probes.append(1) or (False, "нет"),
+                              launcher=fake_launcher(tmp_path, calls))
     before = len(root.scheduled)
-    root.scheduled[-1][1]()  # сработал таймер
-    assert len(root.scheduled) == before + 1  # ровно одна следующая отметка, не две
+    root.scheduled[-1][1]()
+    assert len(root.scheduled) == before + 1 and len(probes) == 2
+    menu.start()  # попытка идёт: пульт читает процесс полёта, окно его не трогает
+    probes.clear()
+    refresh = [cb for _, cb in root.scheduled if cb.__name__ == "refresh_gamepad"][-1]
+    refresh()
+    assert probes == []
 
 
-def test_start_runs_an_attempt_and_returns_to_the_menu(tmp_path):
-    menu, root, shown = make_menu(tmp_path)
-    menu.end.set("на финише")
-    menu.start()
-    assert menu.start_button.kw["state"] == "disabled"
-    menu._thread.join(timeout=60)
-    menu.poll()
-    assert menu.start_button.kw["state"] == "normal"
-    assert "КОНЕЦ ЭКСПЕРИМЕНТА" in menu.status.get()
-    runs = list(tmp_path.glob("run_*"))
-    assert len(runs) == 1
-    assert sorted(p.name for p in runs[0].iterdir()) == ["experiment.json", "summary.json", "track.csv"]
-    assert not shown.get("errors")
-
-
-def test_second_start_after_the_end_makes_a_second_attempt(tmp_path):
-    menu, _, _ = make_menu(tmp_path)
-    menu.end.set("на финише")
-    for _ in range(2):
-        menu.start()
-        menu._thread.join(timeout=60)
-        menu.poll()
-    assert len(list(tmp_path.glob("run_*"))) == 2
-
-
-def test_parameters_from_the_fields_reach_the_run(tmp_path):
-    seen = []
-    menu, _, _ = make_menu(tmp_path, runner=lambda cfg: seen.append(cfg) or type(
-        "O", (), {"summary": {"finished": 0, "drones": cfg.drones, "collided": 0}, "run_dir": tmp_path})())
+def test_start_launches_the_attempt_with_the_menu_values(tmp_path):
+    calls = []
+    menu, root, _ = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.participant.set("P07")
     menu.drones.set(4)
     menu.end.set("на финише")
     menu.mode.set("Acro")
@@ -147,11 +163,94 @@ def test_parameters_from_the_fields_reach_the_run(tmp_path):
     menu.blackout.set(800)
     menu.assist.set(True)
     menu.start()
-    menu._thread.join(timeout=10)
-    cfg = seen[0]
-    assert (cfg.drones, cfg.end_on, cfg.flight_mode, cfg.wind_law) == (4, "finish", "acro", "gusts")
-    assert cfg.blackout_ms == 800 and cfg.assist is True
-    assert cfg.backend == "kinematic"
+    cfg = calls[0]
+    assert (cfg.participant, cfg.drones, cfg.end_on) == ("P07", 4, "finish")
+    assert (cfg.flight_mode, cfg.wind_law, cfg.blackout_ms, cfg.assist) == ("acro", "gusts", 800, True)
+    assert cfg.backend == "kinematic" and cfg.log_dir == str(tmp_path)
+    assert menu.start_button.kw["state"] == "disabled" and menu.stop_button.kw["state"] == "normal"
+    assert "Идёт эксперимент" in menu.status.get() and "run" in menu.status.get()
+
+
+def test_normal_end_returns_to_the_menu(tmp_path):
+    calls = []
+    menu, _, _ = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.start()
+    calls[1].finish()
+    menu.poll()
+    assert "КОНЕЦ ЭКСПЕРИМЕНТА" in menu.status.get() and "3 из 3" in menu.status.get()
+    assert menu.start_button.kw["state"] == "normal" and menu.stop_button.kw["state"] == "disabled"
+
+
+def test_still_running_poll_schedules_the_next_check(tmp_path):
+    calls = []
+    menu, root, _ = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.start()
+    before = len(root.scheduled)
+    menu.poll()
+    assert len(root.scheduled) == before + 1
+    assert menu.start_button.kw["state"] == "disabled"
+
+
+def test_stop_button_stops_the_attempt_and_saves(tmp_path):
+    calls = []
+    menu, _, _ = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.start()
+    menu.stop()
+    assert calls[1].stop_calls == 1 and "сохраняю" in menu.status.get()
+    menu.poll()
+    assert "ОСТАНОВЛЕНА" in menu.status.get() and "Журнал сохранён" in menu.status.get()
+    assert menu.start_button.kw["state"] == "normal" and menu.stop_button.kw["state"] == "disabled"
+    menu.stop()  # повторное нажатие без попытки ничего не ломает
+    assert calls[1].stop_calls == 1
+
+
+def test_failed_attempt_is_explained_in_the_window(tmp_path):
+    calls = []
+    menu, _, _ = make_menu(tmp_path, launcher=fake_launcher(
+        tmp_path, calls, summary=None, ok=False, message="Не удалось подключиться к симулятору"))
+    menu.start()
+    calls[1].finish()
+    menu.poll()
+    assert "Ошибка" in menu.status.get() and "подключиться" in menu.status.get()
+    assert menu.start_button.kw["state"] == "normal"
+
+
+def test_invalid_parameters_show_a_message_and_do_not_start(tmp_path):
+    calls = []
+    menu, _, shown = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.drones.set(0)
+    menu.start()
+    assert calls == [] and "дронов" in shown["errors"][0]
+    menu.drones.set(3)
+    menu.participant.set("../evil")
+    menu.start()
+    assert calls == [] and "участник" in shown["errors"][1]
+
+
+def test_not_a_number_in_a_field_is_reported_not_crashed(tmp_path):
+    calls = []
+    menu, _, shown = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.drones.set("abc")
+    menu.start()
+    assert calls == [] and "числа" in shown["errors"][0]
+
+
+def test_start_pressed_twice_while_running_is_ignored(tmp_path):
+    calls = []
+    menu, _, _ = make_menu(tmp_path, launcher=fake_launcher(tmp_path, calls))
+    menu.start()
+    menu.start()
+    assert len([c for c in calls if hasattr(c, "participant")]) == 1
+
+
+def test_launcher_error_is_shown_and_buttons_stay_usable(tmp_path):
+    def broken(config):
+        raise OSError("папка недоступна")
+
+    menu, _, shown = make_menu(tmp_path, launcher=broken)
+    menu.start()
+    assert "папка недоступна" in menu.status.get() and shown["errors"]
+    assert menu.start_button.kw.get("state") != "disabled"
 
 
 def test_cosys_choice_and_default_flight_mode(tmp_path):
@@ -161,49 +260,15 @@ def test_cosys_choice_and_default_flight_mode(tmp_path):
     assert menu.read_config().backend == "cosys"
 
 
-def test_invalid_parameters_show_a_message_and_do_not_start(tmp_path):
-    menu, _, shown = make_menu(tmp_path)
-    menu.drones.set(0)
+def test_real_attempt_through_the_window(tmp_path):
+    """Без подмены попытки: окно запускает настоящий процесс и показывает итог."""
+    menu, _, _ = make_menu(tmp_path)  # launcher по умолчанию — настоящий
+    menu.participant.set("P09")
+    menu.end.set("на финише")
     menu.start()
-    assert menu._thread is None
-    assert shown["errors"] and "дронов" in shown["errors"][0]
-    assert menu.start_button.kw.get("state") != "disabled"
-
-
-def test_not_a_number_in_a_field_is_reported_not_crashed(tmp_path):
-    menu, _, shown = make_menu(tmp_path)
-    menu.drones.set("abc")
-    menu.start()
-    assert menu._thread is None
-    assert "числа" in shown["errors"][0]
-
-
-def test_error_inside_the_run_is_shown_in_the_window(tmp_path):
-    def broken(cfg):
-        raise RuntimeError("Cosys не отвечает")
-
-    menu, _, _ = make_menu(tmp_path, runner=broken)
-    menu.start()
-    menu._thread.join(timeout=10)
+    menu.attempt.wait(timeout=60)
     menu.poll()
-    assert "Cosys не отвечает" in menu.status.get()
-    assert menu.start_button.kw["state"] == "normal"
-
-
-def test_start_pressed_twice_while_running_is_ignored(tmp_path):
-    import threading
-
-    gate = threading.Event()
-    calls = []
-
-    def slow(cfg):
-        calls.append(1)
-        gate.wait(10)
-        return type("O", (), {"summary": {"finished": 0, "drones": 3, "collided": 0}, "run_dir": tmp_path})()
-
-    menu, _, _ = make_menu(tmp_path, runner=slow)
-    menu.start()
-    menu.start()  # второй щелчок
-    gate.set()
-    menu._thread.join(timeout=10)
-    assert len(calls) == 1
+    assert "КОНЕЦ ЭКСПЕРИМЕНТА" in menu.status.get()
+    runs = list((tmp_path / "P09").iterdir())
+    assert len(runs) == 1
+    assert sorted(p.name for p in runs[0].glob("drone*.csv")) == ["drone0.csv", "drone1.csv", "drone2.csv"]

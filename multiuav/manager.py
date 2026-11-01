@@ -11,6 +11,7 @@ from pathlib import Path
 from .algorithms import FollowerAlgorithm, load_algorithm
 from .backends.base import SimBackend
 from .keyboard import Keyboard
+from .flightlog import FlightLog
 from .perception import Observer
 from .scenario import Scenario
 from .types import DroneState, RcOverride
@@ -70,9 +71,12 @@ class RunResult:
 
 
 class SwarmManager:
-    def __init__(self, scenario: Scenario, backend: SimBackend) -> None:
+    def __init__(self, scenario: Scenario, backend: SimBackend,
+                 log_dir: str | Path | None = None) -> None:
         self.scenario = scenario
         self.backend = backend
+        self.log_dir = log_dir  # папка журнала по дронам (drone0.csv, ...); None — не писать
+        self._log: FlightLog | None = None
         leader_cls = load_algorithm(scenario.leader.name)
         follower_cls = load_algorithm(scenario.followers.name)
         self.algorithms: list[FollowerAlgorithm] = [
@@ -90,6 +94,8 @@ class SwarmManager:
         dt = 1.0 / sc.rate_hz
         t = 0.0
         self.backend.start(sc)
+        if self.log_dir:
+            self._log = FlightLog(self.log_dir, sc.drones)
         next_tick = time.monotonic()
         keyboard = Keyboard().__enter__()
         if self.observers:
@@ -101,10 +107,11 @@ class SwarmManager:
                     if key in LAND_KEYS:
                         self.toggle_landing()
                 states = self.backend.states()
+                stamp = time.time_ns() // 1_000_000  # время компьютера в момент съёма состояний
                 self._update_outcomes(result, states, t)
                 crashed = len(result.collided) if sc.stop_on_collision else 0
                 if len(result.finished) + crashed >= sc.drones:
-                    self._record(result, states, t, {})
+                    self._record(result, states, t, {}, stamp)
                     break
                 leader = states[0]
                 sent: dict[int, RcOverride] = {}
@@ -119,7 +126,7 @@ class SwarmManager:
                         rc = self.algorithms[state.id].step(state, others, leader, t)
                     self.backend.send(state.id, rc)
                     sent[state.id] = rc
-                self._record(result, states, t, sent)
+                self._record(result, states, t, sent, stamp)
                 self.backend.advance(dt)
                 t += dt
                 if self.backend.realtime:
@@ -130,6 +137,8 @@ class SwarmManager:
         finally:
             keyboard.__exit__(None, None, None)
             self.backend.close()
+            if self._log:
+                self._log.close()
         result.sim_time = t
         return result
 
@@ -143,13 +152,15 @@ class SwarmManager:
         self.backend.message("FOLLOWERS: LANDING" if self.landing else "FOLLOWERS: TAKEOFF")
 
     def _record(self, result: RunResult, states: list[DroneState], t: float,
-                sent: dict[int, RcOverride]) -> None:
+                sent: dict[int, RcOverride], pc_time_ms: int | None = None) -> None:
         for s in states:
             rc = sent.get(s.id)
             channels = (rc.roll, rc.pitch, rc.throttle, rc.yaw, rc.mode) if rc else ("",) * 5
             result.track.append((round(t, 3), s.id, round(float(s.position[0]), 3),
                                  round(float(s.position[1]), 3), round(s.altitude, 3),
                                  round(s.yaw, 4), s.collided, *channels))
+        if self._log:
+            self._log.write_step(t, states, sent, self.backend.blackout(), pc_time_ms)
 
     def _update_outcomes(self, result: RunResult, states: list[DroneState], t: float) -> None:
         finish = self.scenario.finish

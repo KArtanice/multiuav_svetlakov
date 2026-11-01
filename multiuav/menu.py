@@ -2,19 +2,19 @@
 
 Запуск: python -m multiuav menu
 
-Окно только собирает ExperimentConfig (experiment.py) и запускает прогон в отдельном потоке,
-чтобы не зависать. После конца попытки показывает итог и остаётся открытым: можно менять
+Окно только собирает ExperimentConfig (experiment.py) и запускает попытку отдельным процессом
+(`python -m multiuav run ...`), поэтому оно не зависает и не мешает полёту. «Стоп» завершает
+попытку и сохраняет журнал. После конца окно показывает итог и остаётся открытым: можно менять
 параметры и запускать следующую попытку.
 """
 
 from __future__ import annotations
 
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .experiment import (ROOT, ExperimentConfig, gamepad_status, run_experiment)
+from .experiment import ROOT, ExperimentConfig, gamepad_status, start_attempt
 
 END_LABELS = {"по времени": "time", "на финише": "finish"}
 WIND_LABELS = {"постоянный": "constant", "синус": "sine", "порывы": "gusts"}
@@ -26,16 +26,15 @@ RESULT_POLL_MS = 200
 
 
 class Menu:
-    def __init__(self, root: tk.Tk, gamepad_probe=gamepad_status, runner=run_experiment) -> None:
+    def __init__(self, root: tk.Tk, gamepad_probe=gamepad_status, launcher=start_attempt) -> None:
         self.root = root
         self.gamepad_probe = gamepad_probe
-        self.runner = runner
-        self._thread: threading.Thread | None = None
-        self._outcome = None
-        self._error: str | None = None
+        self.launcher = launcher
+        self.attempt = None  # идущая попытка (experiment.Attempt)
         root.title("Симулятор оператора роя")
 
         defaults = ExperimentConfig()
+        self.participant = tk.StringVar(value=defaults.participant)
         self.drones = tk.IntVar(value=defaults.drones)
         self.end = tk.StringVar(value="по времени")
         self.duration = tk.DoubleVar(value=defaults.duration_s)
@@ -67,16 +66,17 @@ class Menu:
 
         exp = ttk.LabelFrame(frame, text="Эксперимент", padding=8)
         exp.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=4)
-        self._row(exp, 0, "Дронов (с ведущим)", ttk.Spinbox(exp, from_=1, to=20, width=8,
+        self._row(exp, 0, "Код участника", ttk.Entry(exp, width=16, textvariable=self.participant))
+        self._row(exp, 1, "Дронов (с ведущим)", ttk.Spinbox(exp, from_=1, to=20, width=8,
                                                            textvariable=self.drones))
-        self._row(exp, 1, "Когда конец", ttk.Combobox(exp, values=list(END_LABELS), width=14,
+        self._row(exp, 2, "Когда конец", ttk.Combobox(exp, values=list(END_LABELS), width=14,
                                                       state="readonly", textvariable=self.end))
-        self._row(exp, 2, "Длительность, с", ttk.Spinbox(exp, from_=10, to=3600, increment=10,
+        self._row(exp, 3, "Длительность, с", ttk.Spinbox(exp, from_=10, to=3600, increment=10,
                                                          width=8, textvariable=self.duration))
-        self._row(exp, 3, "Режим полёта", ttk.Combobox(exp, values=list(MODE_LABELS), width=14,
+        self._row(exp, 4, "Режим полёта", ttk.Combobox(exp, values=list(MODE_LABELS), width=14,
                                                        state="readonly", textvariable=self.mode))
-        self._row(exp, 4, "Алгоритмы помощи", ttk.Checkbutton(exp, variable=self.assist))
-        self._row(exp, 5, "Камеры ведомых", ttk.Checkbutton(exp, variable=self.cameras))
+        self._row(exp, 5, "Алгоритмы помощи", ttk.Checkbutton(exp, variable=self.assist))
+        self._row(exp, 6, "Камеры ведомых", ttk.Checkbutton(exp, variable=self.cameras))
 
         env = ttk.LabelFrame(frame, text="Помехи", padding=8)
         env.grid(row=1, column=1, sticky="nsew", pady=4)
@@ -90,7 +90,7 @@ class Menu:
                                                       state="readonly",
                                                       textvariable=self.wind_law))
 
-        log = ttk.LabelFrame(frame, text="Куда сохранять попытки", padding=8)
+        log = ttk.LabelFrame(frame, text="Куда сохранять попытки (папка/код участника/дата_время)", padding=8)
         log.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
         ttk.Entry(log, textvariable=self.log_dir, width=52).grid(row=0, column=0, sticky="ew")
         ttk.Button(log, text="Обзор…", command=self.choose_folder).grid(row=0, column=1, padx=6)
@@ -105,7 +105,9 @@ class Menu:
         self._row(dbg, 2, "Адрес Cosys-AirSim", ttk.Entry(dbg, width=26, textvariable=self.host))
 
         self.start_button = ttk.Button(frame, text="Старт", command=self.start)
-        self.start_button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 4), ipady=6)
+        self.start_button.grid(row=4, column=0, sticky="ew", pady=(10, 4), padx=(0, 4), ipady=6)
+        self.stop_button = ttk.Button(frame, text="Стоп", command=self.stop, state="disabled")
+        self.stop_button.grid(row=4, column=1, sticky="ew", pady=(10, 4), padx=(4, 0), ipady=6)
         ttk.Label(frame, textvariable=self.status, wraplength=520, justify="left").grid(
             row=5, column=0, columnspan=2, sticky="ew")
         ttk.Label(frame, foreground="#777777", wraplength=520, justify="left",
@@ -131,6 +133,7 @@ class Menu:
         try:
             backend = BACKEND_LABELS[self.backend.get()]
             return ExperimentConfig(
+                participant=self.participant.get().strip(),
                 scenario=str(ROOT / "scenarios" / self.scenario.get()),
                 backend=backend,
                 host=self.host.get().strip(),
@@ -149,8 +152,12 @@ class Menu:
         except (tk.TclError, ValueError, KeyError) as exc:
             raise ValueError("Проверь числа в полях: там должны быть числа.") from exc
 
+    @property
+    def running(self) -> bool:
+        return self.attempt is not None and self.attempt.running
+
     def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if self.running:
             return
         try:
             config = self.read_config()
@@ -161,36 +168,44 @@ class Menu:
             self.status.set("Не могу запустить:\n" + "\n".join(errors))
             messagebox.showerror("Параметры", "\n".join(errors))
             return
+        try:
+            self.attempt = self.launcher(config)
+        except Exception as exc:  # не удалось создать папку, запустить процесс и т. п.
+            self.status.set(f"Не удалось запустить: {exc}")
+            messagebox.showerror("Запуск", str(exc))
+            return
         self.start_button.configure(state="disabled")
-        self.status.set("Идёт эксперимент…")
-        self._outcome, self._error = None, None
-        self._thread = threading.Thread(target=self._work, args=(config,), daemon=True)
-        self._thread.start()
+        self.stop_button.configure(state="normal")
+        self.status.set(f"Идёт эксперимент…\nПапка попытки: {self.attempt.run_dir}")
         self.root.after(RESULT_POLL_MS, self.poll)
 
-    def _work(self, config: ExperimentConfig) -> None:
-        try:
-            self._outcome = self.runner(config)
-        except Exception as exc:  # показываем человеку, а не роняем окно
-            self._error = f"{type(exc).__name__}: {exc}"
+    def stop(self) -> None:
+        if self.running:
+            self.attempt.stop()
+            self.status.set("Останавливаю попытку и сохраняю журнал…")
 
     def poll(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if self.running:
             self.root.after(RESULT_POLL_MS, self.poll)
             return
+        result = self.attempt.result()
         self.start_button.configure(state="normal")
-        if self._error:
-            self.status.set(f"Ошибка: {self._error}")
-        elif self._outcome:
-            s = self._outcome.summary
+        self.stop_button.configure(state="disabled")
+        s = result.summary
+        if result.stopped and result.ok:
+            self.status.set(f"ПОПЫТКА ОСТАНОВЛЕНА. Журнал сохранён.\nПапка попытки: {result.run_dir}")
+        elif result.ok:
             self.status.set(f"КОНЕЦ ЭКСПЕРИМЕНТА. Финишировали: {s['finished']} из {s['drones']}, "
-                            f"разбились: {s['collided']}.\nПапка попытки: {self._outcome.run_dir}\n"
+                            f"разбились: {s['collided']}.\nПапка попытки: {result.run_dir}\n"
                             "Можно менять параметры и запускать следующую попытку.")
+        else:
+            self.status.set(f"Ошибка: попытка не удалась.\n{result.message}\n"
+                            f"Подробности: {result.run_dir / 'run.log'}")
         # Опрос пульта сам перепланирует себя (refresh_gamepad), здесь его запускать не нужно.
 
     def refresh_gamepad(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            self.root.after(GAMEPAD_POLL_MS, self.refresh_gamepad)  # во время полёта не трогаем
+        if self.running:
+            self.root.after(GAMEPAD_POLL_MS, self.refresh_gamepad)  # во время полёта пульт не трогаем
             return
         ok, text = self.gamepad_probe()
         self.gamepad_text.set(("● Пульт подключён: " if ok else "○ Пульт не подключён: ") + text)
